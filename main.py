@@ -169,7 +169,7 @@ class App:
             if self.channel == 'GreatStonedDragon' and 'dragon' in title.lower():
                 title = title.rsplit('||', 1)[0]
 
-                if title in self.dataframe['original_title'].values:
+                if 'original_title' in self.dataframe.columns and title in self.dataframe['original_title'].values:
                     continue
 
             response = self._ask(title)
