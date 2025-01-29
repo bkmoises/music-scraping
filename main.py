@@ -1,5 +1,6 @@
 # %%
 import os
+import sys
 import json
 import time
 import socket
@@ -14,8 +15,11 @@ import pandas as pd
 
 from tqdm import tqdm
 from bs4 import BeautifulSoup
+from dotenv import load_dotenv
 from pydantic import BaseModel
 from urllib.parse import urlparse
+from pymongo.server_api import ServerApi
+from pymongo.mongo_client import MongoClient
 from typing import List, Dict, Optional, Tuple, Set
 
 from selenium import webdriver
@@ -71,12 +75,12 @@ def get_file_from_gist(gist_id: str, gist_token: str, file_name: str) -> Optiona
 
 # %%
 class App():
-    def __init__(self, channel_url: str, full: bool, output: str, database: Dict[str, str], temperature: float):            
+    def __init__(self, channel_url: str, full: bool, output: str, temperature: float):            
         self.channel_url = channel_url
         self.channel_name = channel_url.rsplit("/")[-2].replace("@", "")
         self.full = full
         self.output = output
-        self.database = database
+        self.database = self._start_database()
         self.titles = self._get_content()
         self.model_name = "llama-3.3-70b-versatile"
         self.temperature = temperature
@@ -116,11 +120,26 @@ class App():
         
         return prompt | llm | parser
        
+       
+    def _start_database(self) -> callable:
+        uri = os.getenv('DATABASE_URI')
+
+        client = MongoClient(uri, server_api=ServerApi('1'))
+
+        try:
+            client.admin.command('ping')
+        except Exception as e:
+            logging.error("Falha ao se conectar com o banco de dados")
+            sys.exit()
+
+        db = client['music-scrapping']
         
+        return db['report']
+
+
     def _identify(self, title: str) -> bool:
-        for data in self.database:
-            if 'original_title' in data.keys() and title == data['original_title']:
-                return True
+        if self.database.find_one({'original_title': title}):
+            return True
         return False
         
 
@@ -315,42 +334,18 @@ class App():
                     'description': 'Musicas que foram retiradas do Youtube',
                     'public': True
                 }).json()['id']
-            
+
     
-    def _update_database(self) -> None:
-        content = json.dumps(self.database, indent=4)
-        url = f'https://api.github.com/gists/{os.environ.get("GIST_ID_DATA")}'
-
-        payload = {
-            "description": f"Scrapping realizado em {self.now}",
-            "files": {
-                "report.json": {
-                    "content": content
-                }
-            }
-        }
-
-        headers = {
-            "Authorization": f"token {self.gist_token}",
-            "Accept": "application/vnd.github.v3+json"
-        }
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=2, max=60), reraise=True)
+    def _update_database(self, report_data: List[Dict[str, str]]) -> None:
+        if report_data:
+            try:
+                self.database.insert_many(report_data)
+            except Exception as e:
+                logging.error(f"Falha ao atualizar o banco de dados: {e}")
+                raise
         
-        @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=2, max=60), reraise=True)
-        def _attempt() -> None:
-            response = requests.patch(url, json=payload, headers=headers)
-            
-            if response.status_code != 200:
-                logging.error(f"Falha ao atualizar banco de dados. Status Code: {response.status_code}. Response: {response.text}")
-                raise Exception(f"GitHub API error: {response.status_code}")
-            
-            logging.info("Banco de dados atualizado.")
-
-        try:
-            _attempt()
-        except Exception as e:
-            logging.error(f"Erro ao atualizar banco de dados {e}")
-
-
+        
     def _get_track_metadata(self, artist: str, music: str) -> Optional[Tuple[str, str, str]]:
         try:
             response = requests.get(
@@ -402,13 +397,14 @@ class App():
         new_tracks = self._get_new_tracks()
         url = f'{self.spotify_api}/playlists/{self.playlist_id}/tracks'
         not_added_tracks = []
+        report_data = []
         
         for track in tqdm(new_tracks, desc="Adicionando a playlist:", ncols=80):
             artist = track['artist']
             music = track['track']
-
+            
             try:
-                self.database.append(track)
+                report_data.append(track)
 
                 track_metadata = self._get_track_metadata(artist, music)
                 
@@ -429,18 +425,18 @@ class App():
                 not_added_tracks.append(track)
 
         self._save_not_added_tracks(not_added_tracks)
-        self._update_database()
+        self._update_database(report_data)
         
         logging.info('Execução finalizada!')
 
 # %%
-GIST_ID_CREDENTIAL = os.environ['GIST_ID_ACCESS']
-GIST_ID_DATA = os.environ['GIST_ID_DATA']
-GIST_TOKEN = os.environ['GIST_ACCESS_TOKEN']
+load_dotenv()
 
-# %%
-database = get_file_from_gist(GIST_ID_DATA, GIST_TOKEN, 'report.json')
-credentials = get_file_from_gist(GIST_ID_CREDENTIAL, GIST_TOKEN, "youtube-music-scrapping.json")
+GIST_ID = os.getenv('GIST_ID')
+GIST_TOKEN = os.getenv('GIST_TOKEN')
+GIST_FILE = "youtube-music-scrapping.json"
+
+credentials = get_file_from_gist(GIST_ID, GIST_TOKEN, GIST_FILE)
 
 os.environ['SPOTIFY_USER_ID'] = credentials['user_id']
 os.environ['SPOTIFY_CLIENT_ID'] = credentials['client_id']
@@ -456,7 +452,6 @@ if __name__ == "__main__":
         channel_url=args.url,
         full=args.full,
         output=args.output,
-        database=database,
         temperature=args.temperature
     )
     
