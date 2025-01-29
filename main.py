@@ -16,7 +16,7 @@ from tqdm import tqdm
 from bs4 import BeautifulSoup
 from pydantic import BaseModel
 from urllib.parse import urlparse
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple, Set
 
 from selenium import webdriver
 from selenium.webdriver.firefox.options import Options
@@ -195,7 +195,7 @@ class App():
         default_response = {"artist": "Unknown", "track": "Unknown", "title": "Unknown"}
 
         @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=2, max=60), reraise=True)
-        def _attempt():
+        def _attempt() -> Dict[str, str]:
             return self.chat.invoke(input=description)
 
         try:
@@ -262,7 +262,7 @@ class App():
 
         server = HTTPServer(('localhost', port), RequestHandler)
         
-        def run_server():
+        def run_server() -> None:
             logging.info("Aguardando autorizacao...")
             server.handle_request()
 
@@ -336,7 +336,7 @@ class App():
         }
         
         @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=2, max=60), reraise=True)
-        def _attempt():
+        def _attempt() -> None:
             response = requests.patch(url, json=payload, headers=headers)
             
             if response.status_code != 200:
@@ -351,7 +351,7 @@ class App():
             logging.error(f"Erro ao atualizar banco de dados {e}")
 
 
-    def _get_track_metadata(self, artist: str, music: str):
+    def _get_track_metadata(self, artist: str, music: str) -> Optional[Tuple[str, str, str]]:
         try:
             response = requests.get(
                 f'{self.spotify_api}/search',
@@ -370,7 +370,7 @@ class App():
             return None
     
     
-    def _get_existing_tracks(self, url: str):
+    def _get_existing_tracks(self, url: str) -> Set[Tuple[str, str]]:
         try:
             response = requests.get(url, headers=self.headers)
             response.raise_for_status()
@@ -381,7 +381,7 @@ class App():
             return set()
     
 
-    def _add_track_to_playlist(self, url: str, track_uri: str):
+    def _add_track_to_playlist(self, url: str, track_uri: str) -> bool:
         try:
             response = requests.post(url, headers=self.headers, json={'uris': [track_uri]})
             response.raise_for_status()
@@ -391,7 +391,7 @@ class App():
             return False
         
         
-    def _save_not_added_tracks(self, not_added_tracks: list):
+    def _save_not_added_tracks(self, not_added_tracks: list) -> None:
         if not_added_tracks:
             df = pd.DataFrame(not_added_tracks)
             df.to_excel(self.output, index=False)
@@ -461,4 +461,5 @@ if __name__ == "__main__":
     )
     
     app.run()
+
 
