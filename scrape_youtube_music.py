@@ -50,7 +50,7 @@ class App():
         
         # Parametros de configuração
         self.channel_name = channel_url.rsplit("@")[-1]
-        self.days = 999999 if full else 30
+        self.days = 30
         
         # Carrega variáveis de ambiente necessárias
         self.client_id = os.environ.get("CLIENT_ID")
