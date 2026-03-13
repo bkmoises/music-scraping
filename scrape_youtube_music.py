@@ -497,7 +497,7 @@ if __name__ == "__main__":
     app = App(
         channel_url=args.url,
         full=args.full,
-        output=args.output,
+        model_name=args.model_name,
         temperature=args.temperature
     )
     
