@@ -363,21 +363,36 @@ class App():
             logging.error(f"Erro ao localizar informações da faixa: {e}")
             return None
         
-    def _get_existing_tracks(self) -> Set[Tuple[str, str]]:
+    def _get_existing_track_ids(self) -> Set[str]:
         """
-        Busca todas as faixas já presentes na playlist principal e retorna um conjunto
-        de tuplas (nome_da_faixa, nome_do_artista) para evitar duplicatas.
-        Em caso de erro, retorna um conjunto vazio.
+        Busca TODAS as faixas já presentes na playlist (com paginação)
+        e retorna um conjunto de track_ids (Spotify) para evitar duplicatas de forma robusta.
         """
+        track_ids: Set[str] = set()
         try:
-            response = requests.get(self.playlist_url, headers=self.headers)
-            response.raise_for_status()
-            playlist = response.json()['items']
-            return {(item['track']['name'], item['track']['artists'][0]['name']) for item in playlist}
+            url = self.playlist_url
+            params = {"limit": 100, "offset": 0}
+
+            while url:
+                resp = requests.get(url, headers=self.headers, params=params)
+                resp.raise_for_status()
+                data = resp.json()
+
+                for item in data.get("items", []):
+                    track = item.get("track") or {}
+                    track_id = track.get("id")
+                    if track_id:
+                        track_ids.add(track_id)
+
+                url = data.get("next")  # já vem com offset correto
+                params = None 
+
+            return track_ids
+
         except requests.exceptions.RequestException as e:
-            logging.error(f"Erro ao localizar faixas na playlist: {e}")
+            logging.error(f"Erro ao localizar faixas na playlist (paginando): {e}")
             return set()
-        
+
     def _add_track_to_playlist(self, track_uri: str) -> bool:
         """
         Adiciona a faixa indicada (track_uri) à playlist principal do usuário no Spotify.
@@ -431,17 +446,30 @@ class App():
         resp = requests.get(url, headers=self.headers)
         resp.raise_for_status()
         return resp.json().get("name", "")
+    
+    def _get_track_id_from_uri(self, uri: str) -> str:
+        """
+        Extrai o track_id de um Spotify URI/URL.
+        Ex: 'spotify:track:xxxx' -> 'xxxx'
+        """
+        return uri.split(":")[-1]
 
-    def _add_tracks_to_playlist(self, track_uris: list[str], artist: str) -> None:
-        """Adiciona as faixas à playlist (pulando duplicadas)."""
-        existing_tracks = self._get_existing_tracks()
+    def _add_tracks_to_playlist(self, track_uris: list[str]) -> None:
+        """
+        Adiciona as faixas à playlist (pulando duplicadas) usando track_id como chave.
+        """
+        existing_track_ids = self._get_existing_track_ids()
+
         for uri in track_uris:
-            track_name = self._get_track_name_from_uri(uri)
-            key = (track_name, artist)
-            if key not in existing_tracks:
-                if not self._add_track_to_playlist(uri):
-                    logging.error(f"Falha ao adicionar faixa: {track_name} - {artist}.")
-                    
+            track_id = self._get_track_id_from_uri(uri)
+            if track_id in existing_track_ids:
+                continue
+
+            if self._add_track_to_playlist(uri):
+                existing_track_ids.add(track_id)
+            else:
+                logging.error(f"Falha ao adicionar faixa (uri={uri}).")
+
     def _add_album_tracks(self, artist: str, album: str) -> None:
         """
         Busca o álbum do artista informado e adiciona todas as faixas à playlist principal do usuário.
@@ -452,7 +480,7 @@ class App():
             return
 
         track_uris = self._get_album_track_uris(album_id)
-        self._add_tracks_to_playlist(track_uris, artist)
+        self._add_tracks_to_playlist(track_uris)
     
     def run(self) -> None:
         """
@@ -473,16 +501,21 @@ class App():
                 unknowns.append(metadata)
         
         tracks_data = [
-            self._get_track_metadata(track['artist'], track['track']) 
+            self._get_track_metadata(track['artist'], track['track'])
             for track in tracks
         ]
         tracks_data = [t for t in tracks_data if t]
 
-        existing_tracks = self._get_existing_tracks()
-        for uri, name, artist in tqdm(tracks_data, desc="Adicionando faixas únicas:", ncols=80):          
-            if (name, artist) not in existing_tracks:
-                if not self._add_track_to_playlist(uri):
-                    logging.error(f"Falha ao adicionar faixa: {name} - {artist}.")
+        existing_track_ids = self._get_existing_track_ids()
+        for uri, name, artist in tqdm(tracks_data, desc="Adicionando faixas únicas:", ncols=80):
+            track_id = self._get_track_id_from_uri(uri)
+            if track_id in existing_track_ids:
+                continue
+
+            if self._add_track_to_playlist(uri):
+                existing_track_ids.add(track_id)
+            else:
+                logging.error(f"Falha ao adicionar faixa: {name} - {artist}.")
 
         for album in tqdm(albums, desc="Adicionando álbuns completos:", ncols=80):
             self._add_album_tracks(album['artist'], album['album'])
