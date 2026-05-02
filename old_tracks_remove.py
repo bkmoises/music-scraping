@@ -40,23 +40,25 @@ def get_all_playlist_tracks(playlist_id):
         url = data.get("next")
     return all_items
 
-def remove_tracks_by_position(playlist_id, track_positions):
-    url = f"{SPOTIFY_API}/playlists/{playlist_id}/tracks"
-    payload = {"tracks": track_positions}
+def remove_tracks(playlist_id, tracks_to_remove):
+    url = f"{SPOTIFY_API}/playlists/{playlist_id}/items"
+    payload = {"items": tracks_to_remove}
     resp = requests.delete(url, headers=HEADERS, json=payload)
+
     try:
         resp.raise_for_status()
     except Exception as e:
         logging.error(f"Erro ao remover faixas: {resp.status_code} - {resp.text}")
         raise e
-    logging.info(f"Removidas {len(track_positions)} ocorrências da playlist {playlist_id}")
+
+    logging.info(f"Removidas {len(tracks_to_remove)} faixas da playlist {playlist_id}")
 
 def remove_tracks_from_scrapping_last_30_days():
     playlist_id = get_playlist_id()
     all_items = get_all_playlist_tracks(playlist_id)
     now = datetime.now(timezone.utc)
     production_limit = now - timedelta(days=30)
-    removals = {}
+    tracks_to_remove = []
 
     for idx, item in enumerate(all_items):
         added_at = item.get("added_at")
@@ -70,13 +72,11 @@ def remove_tracks_from_scrapping_last_30_days():
             continue
         if added_time < production_limit:
             uri = track["uri"]
-            if uri not in removals:
-                removals[uri] = []
-            removals[uri].append(idx)
+            if not any(t["uri"] == uri for t in tracks_to_remove):
+                tracks_to_remove.append({"uri": uri})
 
-    tracks_to_remove = [{"uri": uri, "positions": positions} for uri, positions in removals.items()]
     if tracks_to_remove:
-        remove_tracks_by_position(playlist_id, tracks_to_remove)
+        remove_tracks(playlist_id, tracks_to_remove)
     else:
         logging.info("Nenhuma faixa superior a 30 dias para remover.")
 
