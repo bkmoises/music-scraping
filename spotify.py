@@ -43,7 +43,7 @@ def get_token(refresh_token: str, client_id: str, client_secret: str) -> str:
     return resp.json().get('access_token', '')
 
 # %%
-def get_playlist_uri(user_id: str, token: str) -> str:
+def get_playlist_uri(user_id: str, token: str, playlist_name: str = "New Rock Hits") -> str:
     """
     Retorna o id da playlist do usuário no Spotify.
     Se não existir, cria e retorna a nova playlist.
@@ -51,6 +51,7 @@ def get_playlist_uri(user_id: str, token: str) -> str:
     Inputs:
     - user_id (str): id do usuário no Spotify.
     - token (str): Token de acesso válido para uso nas APIs do Spotify.
+    - playlist_name (str): Nome da playlist a ser buscada ou criada.
     
     Returns:
     - str: id da playlist.
@@ -61,11 +62,11 @@ def get_playlist_uri(user_id: str, token: str) -> str:
     playlists = requests.get(url, headers=headers).json()
 
     for playlist in playlists['items']:
-        if 'New Rock Hits' in playlist['name']:
+        if playlist_name in playlist['name']:
             return playlist['id']
 
     payload = {
-        'name': 'New Rock Hits',
+        'name': playlist_name,
         'description': 'Os melhores lançamentos de rock atualizados todos os dias. Fique por dentro das novidades, dos hits que estão em alta e da melhor música que o rock está produzindo. Hard rock, metal, indie, punk e muito mais. Atualizado diariamente para você não perder nada.',
         'public': True
     }
@@ -110,6 +111,42 @@ def get_playlist_tracks(playlist_uri: str, token: str) -> set[str]:
     except requests.exceptions.RequestException as e:
         logging.error(f"Erro ao buscar faixas existentes na playlist: {e}")
         return track_ids
+    
+def get_playlist_tracks_metadata(playlist_uri: str, token: str) -> list[dict]:
+    """
+    Busca todas as faixas de uma playlist do Spotify e 
+    retorna uma lista de dicionários com metadados das faixas.
+    
+    Inputs:
+    - playlist_uri: (str), URI da playlist do Spotify.
+    - token (str): Token de acesso válido para uso nas APIs do Spotify.
+    
+    Returns:
+    - list[dict]: Lista de dicionários contendo metadados das faixas.
+    """
+    url = f"{SPOTIFY_API}/playlists/{playlist_uri}/tracks?limit=100"
+    headers = {"Authorization": f"Bearer {token}"}
+
+    all_items = []
+    while url:
+        resp = requests.get(url, headers=headers, params={"limit": 100})
+        resp.raise_for_status()
+        data = resp.json()
+        items = data.get("items", [])
+        
+        for item in items:
+            track = item.get("track", {})
+
+            all_items.append({
+                "uri": track.get("uri"),
+                "name": track.get("name"),
+                "artists": [artist.get("name") for artist in track.get("artists", [])],
+                "added_at": item.get("added_at"),
+            })
+
+        url = data.get("next")
+
+    return all_items
 
 # %%
 def get_track_uri(artist: str, track: str, token: str) -> Track:
@@ -292,3 +329,26 @@ def get_track_data(uri: str, token: str) -> Track:
         name=track_info["name"],
         artist=track_info['artists'][0]['name']
     )
+
+# %%
+def remove_tracks(playlist_uri: str, tracks_to_remove: list[dict], token: str):
+    """
+    Remove faixas de uma playlist do Spotify.
+
+    Inputs:
+    - playlist_uri (str): O URI da playlist do Spotify.
+    - tracks_to_remove (list[dict]): A lista de dicionários de faixas a serem removidas.
+    - token (str): O token de acesso válido para uso nas APIs do Spotify.
+    """
+    url = f"{SPOTIFY_API}/playlists/{playlist_uri}/items"
+    headers = {"Authorization": f"Bearer {token}"}
+    
+    resp = requests.delete(url, headers=headers, json={"items": tracks_to_remove})
+
+    try:
+        resp.raise_for_status()
+    except Exception as e:
+        logging.error(f"Erro ao remover faixas: {resp.status_code} - {resp.text}")
+        raise e
+
+    logging.info(f"Removidas {len(tracks_to_remove)} faixas da playlist")
