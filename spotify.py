@@ -10,8 +10,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 @dataclass
 class Track:
     uri: str
-    artist: str
     name: str
+    artist: str
+    artistId: str
 
 # %%
 SPOTIFY_API = "https://api.spotify.com/v1"
@@ -21,7 +22,7 @@ def get_token(refresh_token: str, client_id: str, client_secret: str) -> str:
     """
     Solicita um novo access token do Spotify usando o refresh token.
     
-    Inputs:
+    Args:
     - refresh_token (str): Token de atualização obtido durante a autenticação inicial.
     - client_id (str): ID do cliente da aplicação Spotify.
     - client_secret (str): Segredo do cliente da aplicação Spotify.
@@ -48,7 +49,7 @@ def get_playlist_uri(user_id: str, token: str, playlist_name: str = "New Rock Hi
     Retorna o id da playlist do usuário no Spotify.
     Se não existir, cria e retorna a nova playlist.
     
-    Inputs:
+    Args:
     - user_id (str): id do usuário no Spotify.
     - token (str): Token de acesso válido para uso nas APIs do Spotify.
     - playlist_name (str): Nome da playlist a ser buscada ou criada.
@@ -78,7 +79,7 @@ def get_playlist_tracks(playlist_uri: str, token: str) -> set[str]:
     Busca TODAS as faixas já presentes na playlist (com paginação)
     e retorna um conjunto de track_ids.
     
-    Inputs:
+    Args:
     - playlist_uri (str): id da playlist no Spotify.
     - token (str): Token de acesso válido para uso nas APIs do Spotify.
     
@@ -117,7 +118,7 @@ def get_playlist_tracks_metadata(playlist_uri: str, token: str) -> list[dict]:
     Busca todas as faixas de uma playlist do Spotify e 
     retorna uma lista de dicionários com metadados das faixas.
     
-    Inputs:
+    Args:
     - playlist_uri: (str), URI da playlist do Spotify.
     - token (str): Token de acesso válido para uso nas APIs do Spotify.
     
@@ -153,7 +154,7 @@ def get_track_uri(artist: str, track: str, token: str) -> Track:
     """
     Consulta a API do Spotify e retorna um objeto Track da melhor correspondência,
     
-    Inputs:
+    Args:
     - artist (str): Nome do artista.
     - track (str): Nome da faixa.
     - token (str): Token de acesso válido para uso nas APIs do Spotify.
@@ -174,25 +175,26 @@ def get_track_uri(artist: str, track: str, token: str) -> Track:
         items = resp.json().get('tracks', {}).get('items', [])
 
         if not items:
-            return Track(uri='', name='', artist='')
+            return Track(uri='', name='', artist='', artistId='')
 
         track_info = items[0]
         return Track(
             uri=track_info['uri'],
             name=track_info['name'],
-            artist=track_info['artists'][0]['name']
+            artist=track_info['artists'][0]['name'],
+            artistId=track_info['artists'][0]['id']
         )
 
     except requests.exceptions.RequestException as e:
         logging.error(f"Erro ao localizar informações da faixa: {e}")
-        return Track(uri='', name='', artist='')
+        return Track(uri='', name='', artist='', artistId='')
 
 # %%
 def get_album_uri(artist: str, album: str, token: str) -> str:
     """
     Busca o album_id do Spotify a partir de artista e álbum.
 
-    Inputs:
+    Args:
     - artist (str): Nome do artista.
     - album (str): Nome do álbum.
     - token (str): Token de acesso válido para uso nas APIs do Spotify.
@@ -218,7 +220,7 @@ def get_album_tracks(album_uri: str, token: str) -> list[Track]:
     """
     Retorna a lista de Track das faixas do álbum (todas páginas).
 
-    Inputs:
+    Args:
     - album_uri (str): id do álbum no Spotify.
     - token (str): Token de acesso válido para uso nas APIs do Spotify.
     
@@ -239,7 +241,8 @@ def get_album_tracks(album_uri: str, token: str) -> list[Track]:
             [Track(
                 uri=t["uri"], 
                 name=t["name"], 
-                artist=t['artists'][0]['name']
+                artist=t['artists'][0]['name'],
+                artistId=t['artists'][0]['id']
             ) for t in data["items"]]
         )
 
@@ -253,7 +256,7 @@ def add_tracks(playlist_uri: str, track_uris: list[str], token: str) -> dict:
     """
     Adiciona múltiplas faixas à playlist principal do usuário no Spotify.
 
-    Inputs:
+    Args:
     - playlist_uri (str): URI da playlist onde as faixas serão adicionadas
     - track_uris (list[str]): Lista de URIs das faixas a adicionar
     - token (str): Token de autenticação do Spotify
@@ -308,7 +311,7 @@ def get_track_data(uri: str, token: str) -> Track:
     """
     Recupera as informações de uma faixa a partir de sua URI no Spotify.
     
-    Inputs:
+    Args:
     - uri (str): URI da faixa no Spotify.
     - token (str): Token de acesso válido para uso nas APIs do Spotify.
         
@@ -327,7 +330,8 @@ def get_track_data(uri: str, token: str) -> Track:
     return Track(
         uri=uri,
         name=track_info["name"],
-        artist=track_info['artists'][0]['name']
+        artist=track_info['artists'][0]['name'],
+        artistId=track_info['artists'][0]['id']
     )
 
 # %%
@@ -335,7 +339,7 @@ def remove_tracks(playlist_uri: str, tracks_to_remove: list[dict], token: str):
     """
     Remove faixas de uma playlist do Spotify.
 
-    Inputs:
+    Args:
     - playlist_uri (str): O URI da playlist do Spotify.
     - tracks_to_remove (list[dict]): A lista de dicionários de faixas a serem removidas.
     - token (str): O token de acesso válido para uso nas APIs do Spotify.
@@ -352,3 +356,63 @@ def remove_tracks(playlist_uri: str, tracks_to_remove: list[dict], token: str):
         raise e
 
     logging.info(f"Removidas {len(tracks_to_remove)} faixas da playlist")
+
+# %%
+def follow_artist(track: Track, token: str) -> None:
+    """
+    Segue o artista da faixa especificada no Spotify.
+    
+    Args:
+    - track (Track): Objeto Track representando a faixa no Spotify.
+    - token (str): Token de acesso válido para a API do Spotify.
+    """
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        
+        follow_response = requests.put(
+            f"{SPOTIFY_API}/me/following",
+            params={"type": "artist", "ids": track.artistId},
+            headers=headers
+        )
+        follow_response.raise_for_status()
+        
+        logging.info(f"Seguindo artista: {track.artist} (ID: {track.artistId})")
+    
+    except Exception as e:
+        logging.info(f"Erro ao seguir artista {track.artist} (ID: {track.artistId}): {str(e)}")
+
+# %%
+def get_followed_artists(token: str) -> list[str]:
+    """
+    Retorna uma lista com os IDs de todos os artistas que você segue no Spotify.
+    
+    Args:
+    - token (str): Token de acesso para autenticação na API do Spotify.
+    
+    Returns:
+    - list[str]: Lista de IDs dos artistas seguidos.
+    """
+    url = f"{SPOTIFY_API}/me/following"
+    headers = {"Authorization": f"Bearer {token}"}
+    
+    artist_ids = []
+    after = None
+    
+    while True:
+        params = {"type": "artist", "limit": 50}
+        if after:
+            params["after"] = after
+        
+        response = requests.get(url, headers=headers, params=params)
+        response.raise_for_status()
+        
+        data = response.json()
+        artists = data["artists"]["items"]
+        
+        artist_ids.extend([artist["id"] for artist in artists])
+        
+        if data["artists"]["next"]:
+            after = data["artists"]["cursors"]["after"]
+        else:
+            break
+    return artist_ids
