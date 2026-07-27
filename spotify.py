@@ -7,15 +7,82 @@ from dataclasses import dataclass
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 # %%
-@dataclass
-class Track:
-    uri: str
-    name: str
-    artist: str
-    artistId: str
+SPOTIFY_API = "https://api.spotify.com/v1"
 
 # %%
-SPOTIFY_API = "https://api.spotify.com/v1"
+@dataclass
+class Album:
+    id: str
+    name: str
+    release_date: str
+    uri: str
+    href: str
+    
+    @classmethod
+    def save(cls, data: dict) -> "Album":
+        """Factory method para criar a partir da resposta do Spotify"""
+        return cls(
+            id=data.get("id"),
+            name=data.get("name"),
+            release_date=data.get("release_date"),
+            uri=data.get("uri"),
+            href=data.get("href")
+        )
+        
+@dataclass
+class Artist:
+    id: str
+    name: str
+    uri: str
+    
+    @classmethod
+    def save(cls, data: dict) -> "Artist":
+        """Factory method para criar a partir da resposta do Spotify"""
+        return cls(
+            id=data.get("id"),
+            name=data.get("name"),
+            uri=data.get("uri")
+        )
+
+@dataclass
+class Track:
+    id: str
+    name: str
+    uri: str
+    artist: Artist
+    album: Album
+    added_at: str
+    
+    @classmethod
+    def save(cls, data: dict, added_at: str = "") -> "Track":
+        """Factory method para criar a partir da resposta do Spotify"""
+        return cls(
+            id=data.get("id"),
+            name=data.get("name"),
+            uri=data.get("uri"),
+            artist=Artist.save(data.get("artists", [{}])[0]),
+            album=Album.save(data.get("album", {})),
+            added_at=added_at
+        )
+        
+@dataclass
+class Playlist:
+    id: str
+    name: str
+    uri: str
+    url: str
+    count: int
+    
+    @classmethod
+    def save(cls, data: dict) -> "Playlist":
+        """Factory method para criar a partir da resposta do Spotify"""
+        return cls(
+            id=data.get("id"),
+            name=data.get("name"),
+            uri=f"spotify:playlist:{data.get('id')}",
+            url=data.get("tracks", {}).get("href"),
+            count=data.get("tracks", {}).get("total")
+        )
 
 # %%
 def get_token(refresh_token: str, client_id: str, client_secret: str) -> str:
@@ -44,56 +111,80 @@ def get_token(refresh_token: str, client_id: str, client_secret: str) -> str:
     return resp.json().get('access_token', '')
 
 # %%
-def get_playlist_uri(user_id: str, token: str, playlist_name: str = "New Rock Hits") -> str:
+def get_playlist(user_id: str, playlist_name: str, token: str) -> Playlist | None:
     """
-    Retorna o id da playlist do usuário no Spotify.
-    Se não existir, cria e retorna a nova playlist.
+    Busca uma playlist pelo nome dela.
+    Retorna um objeto Playlist se encontrada, caso contrário retorna None.
     
     Args:
-    - user_id (str): id do usuário no Spotify.
-    - token (str): Token de acesso válido para uso nas APIs do Spotify.
-    - playlist_name (str): Nome da playlist a ser buscada ou criada.
+    - user_id (str): ID do usuário do Spotify.
+    - playlist_name (str): Nome da playlist a ser buscada.
+    - token (str): Token de acesso para a API do Spotify.
     
     Returns:
-    - str: id da playlist.
+    - Playlist | None: Objeto Playlist se encontrada, caso contrário None.
     """
     headers = {"Authorization": f"Bearer {token}"}
     url = f"{SPOTIFY_API}/users/{user_id}/playlists"
-
+    
     playlists = requests.get(url, headers=headers).json()
 
     for playlist in playlists['items']:
         if playlist_name in playlist['name']:
-            return playlist['id']
-
-    payload = {
-        'name': playlist_name,
-        'description': 'Os melhores lançamentos de rock atualizados todos os dias. Fique por dentro das novidades, dos hits que estão em alta e da melhor música que o rock está produzindo. Hard rock, metal, indie, punk e muito mais. Atualizado diariamente para você não perder nada.',
-        'public': True
-    }
-    return requests.post(url, headers=headers, json=payload).json()['id']
+            return Playlist.save(playlist)
+    
+    return None
 
 # %%
-def get_playlist_tracks(playlist_uri: str, token: str) -> set[str]:
+def create_playlist(user_id: str, playlist_name: str, description: str, public: bool, token: str) -> Playlist:
     """
-    Busca TODAS as faixas já presentes na playlist (com paginação)
-    e retorna um conjunto de track_ids.
+    Cria uma nova playlist para o usuário especificado.
     
     Args:
-    - playlist_uri (str): id da playlist no Spotify.
+    - user_id (str): id do usuário no Spotify.
+    - playlist_name (str): Nome da playlist a ser criada.
+    - description (str): Descrição da playlist.
+    - public (bool): Define se a playlist será pública.
     - token (str): Token de acesso válido para uso nas APIs do Spotify.
     
     Returns:
-    - set[str]: Conjunto de track_ids já presentes na playlist.
+    - Playlist: objeto da playlist criada.
     """
-    url = f"{SPOTIFY_API}/playlists/{playlist_uri}/tracks"
+    headers = {"Authorization": f"Bearer {token}"}
+    url = f"{SPOTIFY_API}/users/{user_id}/playlists"
+
+    payload = {
+        'name': playlist_name,
+        'description': description,
+        'public': public
+    }
+
+    res = requests.post(url, headers=headers, json=payload)
+    res.raise_for_status()
+    playlist = res.json()
+
+    return Playlist.save(playlist)
+
+# %%
+def get_playlist_tracks(playlist_id: str, token: str) -> list[Track]:
+    """
+    Busca TODAS as faixas já presentes na playlist (com paginação)
+    e retorna uma lista de Track.
+    
+    Args:
+    - playlist_id (str): id da playlist no Spotify.
+    - token (str): Token de acesso válido para uso nas APIs do Spotify.
+    
+    Returns:
+    - list[Track]: Lista de faixas já presentes na playlist.
+    """
+    url = f"{SPOTIFY_API}/playlists/{playlist_id}/tracks"
     headers = {"Authorization": f"Bearer {token}"}
     
-    track_ids: set[str] = set()
+    tracks: list[Track] = []
     
     try:
-        params = {"limit": 100, "offset": 0}
-
+        params = {"limit": 100}
         while url:
             resp = requests.get(url, headers=headers, params=params)
             resp.raise_for_status()
@@ -103,54 +194,18 @@ def get_playlist_tracks(playlist_uri: str, token: str) -> set[str]:
                 track = item.get("track") or {}
                 track_id = track.get("id")
                 if track_id:
-                    track_ids.add(track_id)
+                    tracks.append(Track.save(track, added_at=item.get("added_at", "")))
 
             url = data.get("next")
             params = None
 
-        return track_ids
+        return tracks
     except requests.exceptions.RequestException as e:
         logging.error(f"Erro ao buscar faixas existentes na playlist: {e}")
-        return track_ids
-    
-def get_playlist_tracks_metadata(playlist_uri: str, token: str) -> list[dict]:
-    """
-    Busca todas as faixas de uma playlist do Spotify e 
-    retorna uma lista de dicionários com metadados das faixas.
-    
-    Args:
-    - playlist_uri: (str), URI da playlist do Spotify.
-    - token (str): Token de acesso válido para uso nas APIs do Spotify.
-    
-    Returns:
-    - list[dict]: Lista de dicionários contendo metadados das faixas.
-    """
-    url = f"{SPOTIFY_API}/playlists/{playlist_uri}/tracks?limit=100"
-    headers = {"Authorization": f"Bearer {token}"}
-
-    all_items = []
-    while url:
-        resp = requests.get(url, headers=headers, params={"limit": 100})
-        resp.raise_for_status()
-        data = resp.json()
-        items = data.get("items", [])
-        
-        for item in items:
-            track = item.get("track", {})
-
-            all_items.append({
-                "uri": track.get("uri"),
-                "name": track.get("name"),
-                "artists": [artist.get("name") for artist in track.get("artists", [])],
-                "added_at": item.get("added_at"),
-            })
-
-        url = data.get("next")
-
-    return all_items
+        return tracks
 
 # %%
-def get_track_uri(artist: str, track: str, token: str) -> Track:
+def get_track(artist: str, track: str, token: str) -> Track | None:
     """
     Consulta a API do Spotify e retorna um objeto Track da melhor correspondência,
     
@@ -160,7 +215,7 @@ def get_track_uri(artist: str, track: str, token: str) -> Track:
     - token (str): Token de acesso válido para uso nas APIs do Spotify.
         
     Returns: 
-    - track (Track): objeto contendo a uri, nome da faixa e nome do artista.
+    - track (Track) | None: objeto contendo a uri, nome da faixa e nome do artista, ou None se não encontrado.
     """
     url = f'{SPOTIFY_API}/search'
     headers = {"Authorization": f"Bearer {token}"}
@@ -175,22 +230,17 @@ def get_track_uri(artist: str, track: str, token: str) -> Track:
         items = resp.json().get('tracks', {}).get('items', [])
 
         if not items:
-            return Track(uri='', name='', artist='', artistId='')
+            return None
 
         track_info = items[0]
-        return Track(
-            uri=track_info['uri'],
-            name=track_info['name'],
-            artist=track_info['artists'][0]['name'],
-            artistId=track_info['artists'][0]['id']
-        )
+        return Track.save(track_info)
 
     except requests.exceptions.RequestException as e:
         logging.error(f"Erro ao localizar informações da faixa: {e}")
-        return Track(uri='', name='', artist='', artistId='')
+        return None
 
 # %%
-def get_album_uri(artist: str, album: str, token: str) -> str:
+def get_album(artist: str, album: str, token: str) -> Album | None:
     """
     Busca o album_id do Spotify a partir de artista e álbum.
 
@@ -200,7 +250,7 @@ def get_album_uri(artist: str, album: str, token: str) -> str:
     - token (str): Token de acesso válido para uso nas APIs do Spotify.
 
     Returns:
-    - str: album_id do Spotify ou string vazia se não encontrado.
+    - Album: objeto Album do Spotify ou None se não encontrado.
     """
     params = {"q": f"album:{album} artist:{artist}", "type": "album", "limit": 1}
 
@@ -213,22 +263,22 @@ def get_album_uri(artist: str, album: str, token: str) -> str:
 
     items = data["albums"]["items"]
 
-    return '' if not items else items[0]["uri"].split(":")[-1]
+    return Album.save(items[0]) if items else None
 
 # %%
-def get_album_tracks(album_uri: str, token: str) -> list[Track]:
+def get_album_tracks(album_id: str, token: str) -> list[Track]:
     """
     Retorna a lista de Track das faixas do álbum (todas páginas).
 
     Args:
-    - album_uri (str): id do álbum no Spotify.
+    - album_id (str): id do álbum no Spotify.
     - token (str): Token de acesso válido para uso nas APIs do Spotify.
     
     Returns:
     - list[Track]: Lista de objetos Track representando as faixas do álbum.
     """
     params = {"limit": 50}
-    url = f"{SPOTIFY_API}/albums/{album_uri}/tracks"
+    url = f"{SPOTIFY_API}/albums/{album_id}/tracks"
     headers = {"Authorization": f"Bearer {token}"}
     
     tracks = []
@@ -237,14 +287,7 @@ def get_album_tracks(album_uri: str, token: str) -> list[Track]:
         resp.raise_for_status()
         data = resp.json()
 
-        tracks.extend(
-            [Track(
-                uri=t["uri"], 
-                name=t["name"], 
-                artist=t['artists'][0]['name'],
-                artistId=t['artists'][0]['id']
-            ) for t in data["items"]]
-        )
+        tracks.extend(Track.save(track) for track in data.get("items", []))
 
         url = data.get("next")
         params = None
@@ -252,12 +295,12 @@ def get_album_tracks(album_uri: str, token: str) -> list[Track]:
     return tracks
 
 # %%
-def add_tracks(playlist_uri: str, track_uris: list[str], token: str) -> dict:
+def add_tracks(playlist_id: str, track_uris: list[str], token: str) -> dict:
     """
     Adiciona múltiplas faixas à playlist principal do usuário no Spotify.
 
     Args:
-    - playlist_uri (str): URI da playlist onde as faixas serão adicionadas
+    - playlist_id (str): ID da playlist onde as faixas serão adicionadas
     - track_uris (list[str]): Lista de URIs das faixas a adicionar
     - token (str): Token de autenticação do Spotify
 
@@ -270,7 +313,7 @@ def add_tracks(playlist_uri: str, track_uris: list[str], token: str) -> dict:
     }
     """
     headers = {"Authorization": f"Bearer {token}"}
-    playlist_url = f'{SPOTIFY_API}/playlists/{playlist_uri}/tracks'
+    playlist_url = f'{SPOTIFY_API}/playlists/{playlist_id}/tracks'
     
     BATCH_SIZE = 100
     stats = {'total': len(track_uris), 'added': 0, 'failed': 0, 'errors': []}
@@ -307,44 +350,16 @@ def add_tracks(playlist_uri: str, track_uris: list[str], token: str) -> dict:
     return stats
 
 # %%
-def get_track_data(uri: str, token: str) -> Track:
-    """
-    Recupera as informações de uma faixa a partir de sua URI no Spotify.
-    
-    Args:
-    - uri (str): URI da faixa no Spotify.
-    - token (str): Token de acesso válido para uso nas APIs do Spotify.
-        
-    Returns:
-    - Track: Objeto contendo a URI, nome da faixa e nome do artista.
-    """
-    track_id = uri.split(":")[-1]
-    headers = {"Authorization": f"Bearer {token}"}
-    
-    url = f"{SPOTIFY_API}/tracks/{track_id}"
-    resp = requests.get(url, headers=headers)
-    resp.raise_for_status()
-    
-    track_info = resp.json()
-    
-    return Track(
-        uri=uri,
-        name=track_info["name"],
-        artist=track_info['artists'][0]['name'],
-        artistId=track_info['artists'][0]['id']
-    )
-
-# %%
-def remove_tracks(playlist_uri: str, tracks_to_remove: list[dict], token: str):
+def remove_tracks(playlist_id: str, tracks_to_remove: list[dict], token: str):
     """
     Remove faixas de uma playlist do Spotify.
 
     Args:
-    - playlist_uri (str): O URI da playlist do Spotify.
+    - playlist_id (str): O URI da playlist do Spotify.
     - tracks_to_remove (list[dict]): A lista de dicionários de faixas a serem removidas.
     - token (str): O token de acesso válido para uso nas APIs do Spotify.
     """
-    url = f"{SPOTIFY_API}/playlists/{playlist_uri}/items"
+    url = f"{SPOTIFY_API}/playlists/{playlist_id}/items"
     headers = {"Authorization": f"Bearer {token}"}
     
     resp = requests.delete(url, headers=headers, json={"items": tracks_to_remove})
@@ -371,18 +386,18 @@ def follow_artist(track: Track, token: str) -> None:
         
         follow_response = requests.put(
             f"{SPOTIFY_API}/me/following",
-            params={"type": "artist", "ids": track.artistId},
+            params={"type": "artist", "ids": track.artist.id},
             headers=headers
         )
         follow_response.raise_for_status()
         
-        logging.info(f"Seguindo artista: {track.artist} (ID: {track.artistId})")
+        logging.info(f"Seguindo artista: {track.artist.name} (ID: {track.artist.id})")
     
     except Exception as e:
-        logging.info(f"Erro ao seguir artista {track.artist} (ID: {track.artistId}): {str(e)}")
+        logging.info(f"Erro ao seguir artista {track.artist.name} (ID: {track.artist.id}): {str(e)}")
 
 # %%
-def get_followed_artists(token: str) -> list[str]:
+def get_followed_artists(token: str) -> list[Artist]:
     """
     Retorna uma lista com os IDs de todos os artistas que você segue no Spotify.
     
@@ -390,12 +405,12 @@ def get_followed_artists(token: str) -> list[str]:
     - token (str): Token de acesso para autenticação na API do Spotify.
     
     Returns:
-    - list[str]: Lista de IDs dos artistas seguidos.
+    - list[Artist]: Lista de objetos Artist dos artistas seguidos.
     """
     url = f"{SPOTIFY_API}/me/following"
     headers = {"Authorization": f"Bearer {token}"}
     
-    artist_ids = []
+    artists_list = []
     after = None
     
     while True:
@@ -409,10 +424,12 @@ def get_followed_artists(token: str) -> list[str]:
         data = response.json()
         artists = data["artists"]["items"]
         
-        artist_ids.extend([artist["id"] for artist in artists])
+        artists_list.extend([Artist.save(artist) for artist in artists])
         
         if data["artists"]["next"]:
             after = data["artists"]["cursors"]["after"]
         else:
             break
-    return artist_ids
+    return artists_list
+
+

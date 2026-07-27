@@ -18,6 +18,7 @@ parser = argparse.ArgumentParser(description='Scrape music data from a YouTube c
 parser.add_argument('--days_back', type=int, default=1, help='Number of days back to scrape chat data from')
 parser.add_argument('--model_name', type=str, help='LLM model name to use for processing the chat data')
 parser.add_argument('--temperature', type=float, default=0.7, help='Temperature for the model')
+parser.add_argument('--playlist_name', type=str, default="New Rock Hits", help='Spotify playlist name to add tracks to')
 
 # %%
 def remove_duplicate_tracks(track_list: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -59,7 +60,7 @@ def remove_duplicate_tracks(track_list: list[dict]) -> tuple[list[dict], list[di
     return unique_tracks, unique_albums
 
 # %%
-def app(days_back: int, model_name: str, temperature: float):
+def app(days_back: int, playlist_name: str, model_name: str, temperature: float):
     client_id = os.environ.get("CLIENT_ID")
     user_id = os.environ.get("USER_ID")
     client_secret = os.environ.get("CLIENT_SECRET")
@@ -89,37 +90,38 @@ def app(days_back: int, model_name: str, temperature: float):
 
 # %%
     spotify_token   = spotify.get_token(refresh_token, client_id, client_secret)
-    playlist_uri    = spotify.get_playlist_uri(user_id, spotify_token)
-    existing_tracks = spotify.get_playlist_tracks(playlist_uri, spotify_token)
+    playlist        = spotify.get_playlist(user_id, playlist_name, spotify_token)
+    existing_tracks = spotify.get_playlist_tracks(playlist.id, spotify_token)
 
 # %%
-    album_uris = set()
-    for album in unique_albums:
-        title, artist = album["album"], album["artist"]
-        album_uri = spotify.get_album_uri(artist, title, spotify_token)
-        if album_uri and album_uri not in album_uris:
+    album_ids = set()
+    for ua in unique_albums:
+        title, artist = ua["album"], ua["artist"]
+        album = spotify.get_album(artist, title, spotify_token)
+        
+        if album and album.id not in album_ids:
             logging.info(f"Processando album: {title} - {artist}")
-            album_uris.add(album_uri)
+            album_ids.add(album.id)
 
 # %%
     tracks_to_add = []
-    for uri in album_uris:
-        album_tracks = spotify.get_album_tracks(uri, spotify_token)
+    for id in album_ids:
+        album_tracks = spotify.get_album_tracks(id, spotify_token)
         tracks_to_add.extend(album_tracks)
 
 # %%
-    for track in unique_tracks:
-        artist, title = track["artist"], track["track"]
-        track_data = spotify.get_track_uri(artist, title, spotify_token)
-        if track_data.uri:
+    for ut in unique_tracks:
+        artist, title = ut["artist"], ut["track"]
+        track = spotify.get_track(artist, title, spotify_token)
+        if track:
             logging.info(f"Processando track: {title} - {artist}")
-            tracks_to_add.append(track_data)
+            tracks_to_add.append(track)
 
 # %%
-    track_uris = [track.uri for track in tracks_to_add if track.uri.split(":")[-1] not in existing_tracks]
+    track_uris = [track.uri for track in tracks_to_add if track.uri not in existing_tracks]
 
 # %%
-    spotify.add_tracks(playlist_uri, track_uris, spotify_token)
+    spotify.add_tracks(playlist.id, track_uris, spotify_token)
 
 # %%
 if __name__ == "__main__":
@@ -128,6 +130,7 @@ if __name__ == "__main__":
     
     app(
         days_back=args.days_back, 
+        playlist_name=args.playlist_name,
         model_name=args.model_name, 
         temperature=args.temperature
     )
