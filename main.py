@@ -118,7 +118,8 @@ def app(days_back: int, playlist_name: str, model_name: str, temperature: float)
             tracks_to_add.append(track)
 
 # %%
-    track_uris = [track.uri for track in tracks_to_add if track.uri not in existing_tracks]
+    existing_uris = [track.uri for track in existing_tracks]
+    track_uris    = [track.uri for track in tracks_to_add if track.uri not in existing_uris]
 
 # %%
     spotify.add_tracks(playlist.id, track_uris, spotify_token)
