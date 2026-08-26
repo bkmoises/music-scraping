@@ -34,5 +34,5 @@ jobs:
         run: |
           python main.py \
             --days_back 1 \
-            --model_name "llama-3.3-70b-versatile" \
+            --model_name "openai/gpt-oss-20b" \
             --temperature 0.7
