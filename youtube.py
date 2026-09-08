@@ -33,7 +33,12 @@ def get_channel_id(channel_name: str, api_key: str) -> str:
     url = (f"{YOUTUBE_API}/search?part=snippet&type=channel&q={channel_name}&key={api_key}")
     resp = requests.get(url).json()
 
-    return resp["items"][0]["snippet"]["channelId"]
+    items = resp.get("items", [])
+    if not items:
+        logging.warning("No channel found for '%s'. Skipping.", channel_name)
+        return None
+
+    return items[0]["snippet"]["channelId"]
 
 # %%
 def get_playlist_id(channel_id: str, api_key: str) -> str:
@@ -162,6 +167,8 @@ def process(channel_name: str, days_back: int, api_key: str) -> list[Video]:
     - videos (list[Video]): Lista de objetos Video publicados no período especificado.
     """
     channel_id  = get_channel_id(channel_name, api_key)
+    if channel_id is None:
+        return []
     playlist_id = get_playlist_id(channel_id, api_key)
     videos      = get_playlist_videos(playlist_id, api_key, days_back)
 
